@@ -28,10 +28,10 @@ public class User {
     private String name; // 사용자 이름
 
     @Column(nullable = false)
-    private String deliveryAddress; // 배송지
+    private String delivery_address; // 배송지
 
     @Column(length = 20)
-    private String phoneNumber; // 전화번호
+    private String phone_number; // 전화번호
 
     @Column(nullable = false, length = 20)
     private String role = "ROLE_USER"; // 권한
