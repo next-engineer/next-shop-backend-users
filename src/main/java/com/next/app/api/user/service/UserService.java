@@ -2,13 +2,12 @@ package com.next.app.api.user.service;
 
 import com.next.app.api.user.entity.User;
 import com.next.app.api.user.repository.UserRepository;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -17,48 +16,38 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
-    @Transactional(readOnly = true)
-    public List<User> listUsersAny() {
-        return userRepository.findAllRaw();
-    }
-
-    @Transactional(readOnly = true)
-    public List<User> getAllUsers() {
+    // 회원 전체 조회 (활성 사용자만)
+    public List<User> findAll() {
         return userRepository.findAllByDeletedFalse();
     }
 
-    @Transactional(readOnly = true)
-    public Optional<User> getUserById(Long id) {
-        return userRepository.findByIdAndDeletedFalse(id);
+    // ID로 회원 조회
+    public User getById(Long id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("사용자를 찾을 수 없습니다."));
     }
 
-    @Transactional(readOnly = true)
-    public Optional<User> getUserByIdAny(Long id) {
-        return userRepository.findRawById(id);
+    // 이메일로 회원 조회 (활성 사용자만)
+    public User getByEmail(String email) {
+        return userRepository.findByEmailAndDeletedFalse(email)
+                .orElseThrow(() -> new EntityNotFoundException("사용자를 찾을 수 없습니다."));
     }
 
-    @Transactional(readOnly = true)
-    public Optional<User> getUserByEmail(String email) {
-        return userRepository.findByEmail(email);
-    }
-
-    @Transactional
-    public User createUser(User user) {
-        userRepository.findByEmail(user.getEmail()).ifPresent(u -> {
+    // 회원가입
+    public User register(User user) {
+        if (userRepository.existsByEmailAndDeletedFalse(user.getEmail())) {
             throw new IllegalArgumentException("이미 사용 중인 이메일입니다.");
-        });
+        }
         user.setPassword(passwordEncoder.encode(user.getPassword()));
         return userRepository.save(user);
     }
 
-    @Transactional(readOnly = true)
+    // 로그인용 인증
     public User authenticate(String email, String rawPassword) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        User user = getByEmail(email);
         if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
             throw new IllegalArgumentException("비밀번호가 일치하지 않습니다.");
         }
         return user;
     }
-
 }

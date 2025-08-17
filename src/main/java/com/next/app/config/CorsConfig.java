@@ -20,7 +20,7 @@ public class CorsConfig {
                 //alb DNS 주소
                 "dong-test-alb-1868547901.ap-northeast-2.elb.amazonaws.com"
                 //프론트엔드 도매인 생성 시 사용.
-//                "https://your-frontend-domain.com"
+//                "http://shop.nextcloudlab.com"
         ));
         cfg.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
         cfg.setAllowedHeaders(List.of("Authorization","Content-Type","X-Requested-With"));

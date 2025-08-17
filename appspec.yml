@@ -1,0 +1,31 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "[buildspec] pre_build"
+      - chmod +x gradlew || true
+
+  build:
+    commands:
+      - echo "[buildspec] build"
+      - ./gradlew clean bootJar -x test
+      - test -d build/libs || (echo "build/libs not found" && exit 1)
+
+      # 부트 JAR만 하나 집어오기(plain 제외)
+      - JAR=$(ls -1 build/libs/*.jar | grep -v 'plain' | head -n1)
+      - test -n "$JAR" || (echo "no boot jar found"; ls -l build/libs; exit 1)
+      - cp "$JAR" app.jar
+
+      # 스크립트 실행 권한
+      - chmod +x scripts/*.sh || true
+
+  post_build:
+    commands:
+      - echo "[buildspec] post_build done"
+
+artifacts:
+  files:
+    - appspec.yml
+    - app.jar
+    - scripts/**/*

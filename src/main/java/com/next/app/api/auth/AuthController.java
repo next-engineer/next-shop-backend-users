@@ -10,8 +10,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
-import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.List;
 
 @RestController
@@ -32,37 +30,12 @@ public class AuthController {
             throw new IllegalArgumentException("Invalid credentials");
         }
 
-        List<String> roles = extractRoles(user);
+        List<String> roles = user.getRole() != null ?
+                List.of(user.getRole()) : List.of("ROLE_USER");
+
         String token = jwtTokenProvider.createToken(user.getId(), user.getEmail(), roles);
 
         return ResponseEntity.ok(new TokenResponse("Bearer", token));
-    }
-
-    private List<String> extractRoles(User user) {
-        try {
-            Method m = user.getClass().getMethod("getRoles");
-            Object raw = m.invoke(user);
-            if (raw instanceof Iterable<?> it) {
-                List<String> out = new ArrayList<>();
-                for (Object o : it) if (o != null) out.add(o.toString());
-                if (!out.isEmpty()) return out;
-            }
-        } catch (Exception ignored) { }
-        try {
-            Method m = user.getClass().getMethod("getRole");
-            Object raw = m.invoke(user);
-            if (raw != null) return List.of(raw.toString());
-        } catch (Exception ignored) { }
-        try {
-            Method m = user.getClass().getMethod("getAuthorities");
-            Object raw = m.invoke(user);
-            if (raw instanceof Iterable<?> it) {
-                List<String> out = new ArrayList<>();
-                for (Object o : it) if (o != null) out.add(o.toString());
-                if (!out.isEmpty()) return out;
-            }
-        } catch (Exception ignored) { }
-        return List.of("ROLE_USER");
     }
 
     @Data

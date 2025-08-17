@@ -11,10 +11,10 @@ spring:
   datasource:
     # ===== [DB 접속 설정] =====
     # 개발용/운영용에 맞게 URL 수정
-    url: jdbc:mysql://next-db.c74828wmikhx.ap-northeast-2.rds.amazonaws.com:3306/test?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8
+    url: jdbc:mysql://shop-db.c74828wmikhx.ap-northeast-2.rds.amazonaws.com:3306/users?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: admin
-    password: ":<~2?A3d?*r]Z$[w-mUh2O~(YkWR"
+    password: "PgEhzLRi4Pf0cVFG5BhX"
 
   jpa:
     hibernate:
@@ -30,7 +30,7 @@ spring:
 app:
   cors:
     # 프론트엔드 허용 도메인 (환경변수 FRONTEND_ORIGIN 없으면 기본값 사용)
-    allowed-origin: ${FRONTEND_ORIGIN:http://localhost:3000}
+    allowed-origin: ${FRONTEND_ORIGIN:http://shop.nextcloudlab.com}
 
 jwt:
   # JWT 서명 시크릿 키 (32자 이상!)

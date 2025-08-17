@@ -1,64 +1,58 @@
 package com.next.app.api.user.entity;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.SQLDelete;
-import org.hibernate.annotations.Where;
+import lombok.Setter;
 
-@Entity
-@Table(name = "users")
-@Data
+import java.time.LocalDateTime;
+
+@Getter
+@Setter
 @NoArgsConstructor
-@AllArgsConstructor
-@SQLDelete(sql = "UPDATE users SET deleted = true WHERE id = ?")
-@Where(clause = "deleted = false")
+@Entity
+@Table(name = "users", catalog = "users")
 public class User {
-
-    private static final ObjectMapper OM = new ObjectMapper();
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true)
-    private String email;
+    @Column(nullable = false, unique = true, length = 150)
+    private String email; // 이메일 (로그인용, 유일)
+
+    @Column(nullable = false)
+    private String password; // 암호화 저장
 
     @Column(nullable = false, length = 100)
-    private String name;
+    private String name; // 사용자 이름
 
     @Column(nullable = false)
-    private String password;
+    private String deliveryAddress; // 배송지
 
-    @Column(nullable = false, name = "delivery_address", columnDefinition = "TEXT")
-    private String delivery_address;
+    @Column(length = 20)
+    private String phoneNumber; // 전화번호
 
-    @Column(length = 20, name = "phone_number")
-    private String phone_number;
+    @Column(nullable = false, length = 20)
+    private String role = "ROLE_USER"; // 권한
 
     @Column(nullable = false)
-    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private boolean deleted = false;
 
-    @Column(name = "created_at")
-    private java.time.LocalDateTime createdAt;
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
-    private java.time.LocalDateTime updateAt;
+    @Column(nullable = false)
+    private LocalDateTime updatedAt;
 
     @PrePersist
-    protected void onCreate() {
-        createdAt = java.time.LocalDateTime.now();
-        updateAt = java.time.LocalDateTime.now();
+    public void onCreate() {
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = this.createdAt;
     }
 
     @PreUpdate
-    protected void onUpdate() {
-        updateAt = java.time.LocalDateTime.now();
+    public void onUpdate() {
+        this.updatedAt = LocalDateTime.now();
     }
 }
