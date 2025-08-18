@@ -5,7 +5,7 @@ springdoc:
 
 server:
   # 서버 포트 설정 (기본 8080)
-  port: 8080
+  port: 8081
 
 spring:
   datasource:
