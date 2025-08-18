@@ -4,7 +4,7 @@ set -euo pipefail
 APP_DIR="/opt/myapp"
 JAR="$APP_DIR/app.jar"
 LOG="$APP_DIR/app.out"
-PORT="${SERVER_PORT:-8081}"
+PORT="${SERVER_PORT:-8080}"
 
 echo "[START] launching app.jar (no systemd)"
 
