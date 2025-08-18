@@ -10,6 +10,13 @@ SCRIPT_DIR="$APP_DIR/scripts"
 mkdir -p "$APP_DIR" "$SCRIPT_DIR"
 chown -R ec2-user:ec2-user "$APP_DIR"
 
+if ! command -v java >/dev/null 2>&1; then
+  echo "[BeforeInstall] installing Amazon Corretto 17..."
+  rpm --import https://yum.corretto.aws/corretto.key
+  curl -fsSL -o /etc/yum.repos.d/corretto.repo https://yum.corretto.aws/corretto.repo
+  yum install -y java-17-amazon-corretto-headless
+fi
+
 # 편의 툴(없으면 설치)
 for pkg in unzip curl; do
   if ! command -v "$pkg" >/dev/null 2>&1; then
