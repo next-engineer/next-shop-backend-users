@@ -1,31 +1,22 @@
-version: 0.2
+version: 0.0
 
-phases:
-  pre_build:
-    commands:
-      - echo "[buildspec] pre_build"
-      - chmod +x gradlew || true
+files:
+  - source: app.jar
+    destination: /opt/myapp
+  - source: scripts/
+    destination: /opt/myapp/scripts
 
-  build:
-    commands:
-      - echo "[buildspec] build"
-      - ./gradlew clean bootJar -x test
-      - test -d build/libs || (echo "build/libs not found" && exit 1)
+hooks:
+  BeforeInstall:
+    - location: scripts/before_install.sh
+      timeout: 300
+      runas: root
+  AfterInstall:
+    - location: scripts/after_install.sh
+      timeout: 300
+      runas: root
+  ApplicationStart:
+    - location: scripts/start.sh
+      timeout: 900
+      runas: root
 
-      # 부트 JAR만 하나 집어오기(plain 제외)
-      - JAR=$(ls -1 build/libs/*.jar | grep -v 'plain' | head -n1)
-      - test -n "$JAR" || (echo "no boot jar found"; ls -l build/libs; exit 1)
-      - cp "$JAR" app.jar
-
-      # 스크립트 실행 권한
-      - chmod +x scripts/*.sh || true
-
-  post_build:
-    commands:
-      - echo "[buildspec] post_build done"
-
-artifacts:
-  files:
-    - appspec.yml
-    - app.jar
-    - scripts/**/*
