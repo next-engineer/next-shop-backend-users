@@ -1,0 +1,16 @@
+version: 0.2
+env:
+  variables:
+    ASG_NAME: user-api-asg   # <- 실제 ASG 이름
+phases:
+  build:
+    commands:
+      - |
+        aws autoscaling start-instance-refresh \
+          --auto-scaling-group-name "$ASG_NAME" \
+          --preferences MinHealthyPercentage=90,InstanceWarmup=90,SkipMatching=false \
+          --strategy Rolling \
+          > refresh.json
+artifacts:
+  files:
+    - refresh.json

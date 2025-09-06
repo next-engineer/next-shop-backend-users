@@ -18,8 +18,9 @@ public class CorsConfig {
                 "http://localhost:3000",
                 "http://localhost:5173",
                 //alb DNS 주소
-                "shop-user-alb-72649105.ap-northeast-2.elb.amazonaws.com",
-                "https://shop.nextcloudlab.com/"
+                "shop-user-api-1314323053.ap-northeast-2.elb.amazonaws.com",
+                "https://shop.nextcloudlab.com/",
+                "https://d9gv73ip2rojg.cloudfront.net"
                 //프론트엔드 도매인 생성 시 사용.
 //                "http://shop.nextcloudlab.com"
         ));

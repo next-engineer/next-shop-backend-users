@@ -1,0 +1,26 @@
+version: 0.2
+env:
+  variables:
+    APP_NAME: user-api
+    DIST_DIR: dist
+    ARTIFACT_BUCKET: shop-user-api-artifacts     # <- S3 버킷
+phases:
+  install:
+    runtime-versions:
+      java: corretto17
+    commands:
+      - java -version
+  build:
+    commands:
+      - ./gradlew clean build -x test
+      - mkdir -p $DIST_DIR
+      - cp build/libs/*-SNAPSHOT.jar $DIST_DIR/$APP_NAME.jar || cp build/libs/*.jar $DIST_DIR/$APP_NAME.jar
+  post_build:
+    commands:
+      - VERSION_TAG=$(date +%Y%m%d%H%M%S)
+      - aws s3 cp $DIST_DIR/$APP_NAME.jar s3://$ARTIFACT_BUCKET/releases/$APP_NAME-$VERSION_TAG.jar
+      - aws s3 cp $DIST_DIR/$APP_NAME.jar s3://$ARTIFACT_BUCKET/releases/$APP_NAME-current.jar
+      - printf '{"bucket":"%s","key_current":"%s","version_tag":"%s"}' "$ARTIFACT_BUCKET" "releases/$APP_NAME-current.jar" "$VERSION_TAG" > artifact.json
+artifacts:
+  files:
+    - artifact.json

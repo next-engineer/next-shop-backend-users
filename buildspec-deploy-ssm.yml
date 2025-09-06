@@ -1,0 +1,92 @@
+version: 0.2
+env:
+  variables:
+    TARGET_TAG_KEY: app          # 배포 대상 인스턴스 태그 키
+    TARGET_TAG_VAL: user-api      # 배포 대상 인스턴스 태그 값
+    SERVICE_NAME: user-api
+    PORT: "8080"                  # 애플리케이션 포트
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - pip install --quiet jq >/dev/null 2>&1 || true
+  build:
+    commands:
+      - echo "Read artifact.json"
+      - BUCKET=$(jq -r '.bucket' artifact.json)
+      - KEY_CUR=$(jq -r '.key_current' artifact.json)
+      - echo "Deploy object: s3://$BUCKET/$KEY_CUR"
+
+      # 모든 대상 인스턴스에서: SSM 파라미터 → .env 생성 → JAR 갱신 → systemd 재시작 → 헬스체크
+      - |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --comment "deploy ${SERVICE_NAME}" \
+          --targets "Key=tag:${TARGET_TAG_KEY},Values=${TARGET_TAG_VAL}" \
+          --parameters '{
+            "commands": [
+              "set -euo pipefail",
+              "APP_DIR=/opt/'"${SERVICE_NAME}"'",
+              "PORT='"${PORT}"'",
+              "sudo mkdir -p $APP_DIR && sudo chown -R ec2-user:ec2-user $APP_DIR",
+
+              "# --- Parameter Store -> local vars ---",
+              "getp() { aws ssm get-parameter --with-decryption --name \"$1\" --query '\''Parameter.Value'\'' --output text; }",
+              "DB_URL=$(getp /nextshop/user/db/url)",
+              "DB_USER=$(getp /nextshop/user/db/username)",
+              "DB_PASS=$(getp /nextshop/user/db/password)",
+              "JWT_SECRET=$(getp /nextshop/user/jwt_secret || echo)",
+
+              "# --- write .env (변수 값 실제 치환) ---",
+              "cat > $APP_DIR/.env <<EOF",
+              "SPRING_PROFILES_ACTIVE=prod",
+              "SERVER_PORT=${PORT}",
+              "SPRING_DATASOURCE_URL=${DB_URL}",
+              "SPRING_DATASOURCE_USERNAME=${DB_USER}",
+              "SPRING_DATASOURCE_PASSWORD=${DB_PASS}",
+              "JWT_SECRET=${JWT_SECRET}",
+              "EOF",
+              "chown ec2-user:ec2-user $APP_DIR/.env",
+
+              "# --- 가져온 JAR로 교체 ---",
+              "aws s3 cp s3://'"${BUCKET}"'/'"${KEY_CUR}"' $APP_DIR/'"${SERVICE_NAME}"'.jar",
+
+              "# --- systemd unit 작성/갱신 ---",
+              "sudo bash -c '\''cat > /etc/systemd/system/'"${SERVICE_NAME}"'.service <<UNIT",
+              "[Unit]",
+              "Description='"${SERVICE_NAME}"'",
+              "After=network.target",
+              "",
+              "[Service]",
+              "User=ec2-user",
+              "WorkingDirectory=/opt/'"${SERVICE_NAME}"'",
+              "EnvironmentFile=/opt/'"${SERVICE_NAME}"'/.env",
+              "ExecStart=/usr/bin/java -Xms256m -Xmx512m -jar /opt/'"${SERVICE_NAME}"'/'"${SERVICE_NAME}"'.jar --server.port=${PORT}",
+              "Restart=always",
+              "RestartSec=5",
+              "LimitNOFILE=65535",
+              "",
+              "[Install]",
+              "WantedBy=multi-user.target",
+              "UNIT'\''",
+
+              "sudo systemctl daemon-reload",
+              "sudo systemctl enable '"${SERVICE_NAME}"'.service",
+              "sudo systemctl restart '"${SERVICE_NAME}"'.service",
+
+              "# --- health check ---",
+              "for i in {1..30}; do curl -fsS http://127.0.0.1:${PORT}/health >/dev/null && exit 0; sleep 2; done",
+              "journalctl -u '"${SERVICE_NAME}"'.service -n 200 --no-pager || true",
+              "exit 1"
+            ]
+          }' \
+          --timeout-seconds 600 \
+          --max-concurrency "50%" \
+          --max-errors "0%" \
+          --region ap-northeast-2 \
+          > ssm-result.json
+artifacts:
+  files:
+    - ssm-result.json
+    - artifact.json
