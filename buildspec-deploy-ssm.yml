@@ -1,24 +1,23 @@
 version: 0.2
 env:
   variables:
-    TARGET_TAG_KEY: app          # 배포 대상 인스턴스 태그 키
-    TARGET_TAG_VAL: user-api      # 배포 대상 인스턴스 태그 값
+    # ====== 필요한 값만 너 환경으로 바꿔줘 ======
+    BUCKET: shop-user-api-artifacts
+    KEY_CUR: releases/user-api-current.jar
+    TARGET_TAG_KEY: app
+    TARGET_TAG_VAL: user-api
     SERVICE_NAME: user-api
-    PORT: "8080"                  # 애플리케이션 포트
+    PORT: "8080"
+    AWS_REGION: ap-northeast-2
 phases:
   install:
     runtime-versions:
       python: 3.11
     commands:
-      - pip install --quiet jq >/dev/null 2>&1 || true
+      - echo "Region: $AWS_REGION"
   build:
     commands:
-      - echo "Read artifact.json"
-      - BUCKET=$(jq -r '.bucket' artifact.json)
-      - KEY_CUR=$(jq -r '.key_current' artifact.json)
-      - echo "Deploy object: s3://$BUCKET/$KEY_CUR"
-
-      # 모든 대상 인스턴스에서: SSM 파라미터 → .env 생성 → JAR 갱신 → systemd 재시작 → 헬스체크
+      - echo "Deploy object => s3://$BUCKET/$KEY_CUR"
       - |
         aws ssm send-command \
           --document-name "AWS-RunShellScript" \
@@ -38,38 +37,15 @@ phases:
               "DB_PASS=$(getp /nextshop/user/db/password)",
               "JWT_SECRET=$(getp /nextshop/user/jwt_secret || echo)",
 
-              "# --- write .env (변수 값 실제 치환) ---",
-              "cat > $APP_DIR/.env <<EOF",
-              "SPRING_PROFILES_ACTIVE=prod",
-              "SERVER_PORT=${PORT}",
-              "SPRING_DATASOURCE_URL=${DB_URL}",
-              "SPRING_DATASOURCE_USERNAME=${DB_USER}",
-              "SPRING_DATASOURCE_PASSWORD=${DB_PASS}",
-              "JWT_SECRET=${JWT_SECRET}",
-              "EOF",
+              "# --- write .env (실제 값 치환) ---",
+              "bash -lc $'\''cat > $APP_DIR/.env <<\\\\EOF\\\\nSPRING_PROFILES_ACTIVE=prod\\\\nSERVER_PORT=${PORT}\\\\nSPRING_DATASOURCE_URL=${DB_URL}\\\\nSPRING_DATASOURCE_USERNAME=${DB_USER}\\\\nSPRING_DATASOURCE_PASSWORD=${DB_PASS}\\\\nJWT_SECRET=${JWT_SECRET}\\\\nEOF'\''",
               "chown ec2-user:ec2-user $APP_DIR/.env",
 
-              "# --- 가져온 JAR로 교체 ---",
+              "# --- download jar ---",
               "aws s3 cp s3://'"${BUCKET}"'/'"${KEY_CUR}"' $APP_DIR/'"${SERVICE_NAME}"'.jar",
 
-              "# --- systemd unit 작성/갱신 ---",
-              "sudo bash -c '\''cat > /etc/systemd/system/'"${SERVICE_NAME}"'.service <<UNIT",
-              "[Unit]",
-              "Description='"${SERVICE_NAME}"'",
-              "After=network.target",
-              "",
-              "[Service]",
-              "User=ec2-user",
-              "WorkingDirectory=/opt/'"${SERVICE_NAME}"'",
-              "EnvironmentFile=/opt/'"${SERVICE_NAME}"'/.env",
-              "ExecStart=/usr/bin/java -Xms256m -Xmx512m -jar /opt/'"${SERVICE_NAME}"'/'"${SERVICE_NAME}"'.jar --server.port=${PORT}",
-              "Restart=always",
-              "RestartSec=5",
-              "LimitNOFILE=65535",
-              "",
-              "[Install]",
-              "WantedBy=multi-user.target",
-              "UNIT'\''",
+              "# --- systemd unit (ANSI-C quoting로 안전하게) ---",
+              "sudo bash -lc $'\''cat > /etc/systemd/system/'"${SERVICE_NAME}"'.service <<\\\\UNIT\\\\n[Unit]\\\\nDescription='\""${SERVICE_NAME}"\"'\\\\nAfter=network.target\\\\n\\\\n[Service]\\\\nUser=ec2-user\\\\nWorkingDirectory=/opt/'"${SERVICE_NAME}"'\\\\nEnvironmentFile=/opt/'"${SERVICE_NAME}"'/.env\\\\nExecStart=/usr/bin/java -Xms256m -Xmx512m -jar /opt/'"${SERVICE_NAME}"'/'"${SERVICE_NAME}"'.jar --server.port=${PORT}\\\\nRestart=always\\\\nRestartSec=5\\\\nLimitNOFILE=65535\\\\n\\\\n[Install]\\\\nWantedBy=multi-user.target\\\\nUNIT'\''",
 
               "sudo systemctl daemon-reload",
               "sudo systemctl enable '"${SERVICE_NAME}"'.service",
@@ -84,9 +60,8 @@ phases:
           --timeout-seconds 600 \
           --max-concurrency "50%" \
           --max-errors "0%" \
-          --region ap-northeast-2 \
+          --region ${AWS_REGION} \
           > ssm-result.json
 artifacts:
   files:
     - ssm-result.json
-    - artifact.json
