@@ -9,12 +9,14 @@ env:
     SERVICE_NAME: user-api
     PORT: "8080"
     AWS_REGION: ap-northeast-2
+
 phases:
   install:
     runtime-versions:
       python: 3.11
     commands:
       - echo "Region: $AWS_REGION"
+
   build:
     commands:
       - echo "Deploy object => s3://$BUCKET/$KEY_CUR"
@@ -62,6 +64,7 @@ phases:
           --max-errors "0%" \
           --region ${AWS_REGION} \
           > ssm-result.json
+
 artifacts:
   files:
-    - ssm-result.json
+    - ssm-result.json  # 결과 파일
