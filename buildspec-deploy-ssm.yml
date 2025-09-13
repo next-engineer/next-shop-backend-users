@@ -18,80 +18,97 @@ phases:
 
   build:
     commands:
-      - 'echo "Deploy object => s3://${BUCKET}/${KEY_CUR}"'
+      - echo "== write remote script locally =="
 
-      # 1) 원격에서 실행할 commands JSON을 파일로 생성 (YAML 파서와 완전 분리)
-      - >-
-        bash -lc 'cat > params.json <<'\''JSON'\'' 
-        {
-          "commands": [
-            "set -euo pipefail",
-            "APP_DIR=/opt/${SERVICE_NAME}",
-            "sudo mkdir -p /opt/${SERVICE_NAME} && sudo chown -R ec2-user:ec2-user /opt/${SERVICE_NAME}",
-
-            "# --- Parameter Store -> local vars ---",
-            "getp() { aws ssm get-parameter --with-decryption --name \"$1\" --query '\''Parameter.Value'\'' --output text; }",
-            "DB_URL=$(getp /nextshop/user/db/url)",
-            "DB_USER=$(getp /nextshop/user/db/username)",
-            "DB_PASS=$(getp /nextshop/user/db/password)",
-            "JWT_SECRET=$(getp /nextshop/user/jwt_secret || echo)",
-
-            "# --- write .env ---",
-            "cat > /opt/${SERVICE_NAME}/.env <<EOF",
-            "SPRING_PROFILES_ACTIVE=prod",
-            "SERVER_PORT=${PORT}",
-            "SPRING_DATASOURCE_URL=${DB_URL}",
-            "SPRING_DATASOURCE_USERNAME=${DB_USER}",
-            "SPRING_DATASOURCE_PASSWORD=${DB_PASS}",
-            "JWT_SECRET=${JWT_SECRET}",
-            "EOF",
-            "chown ec2-user:ec2-user /opt/${SERVICE_NAME}/.env",
-
-            "# --- JAR 교체 ---",
-            "aws s3 cp s3://${BUCKET}/${KEY_CUR} /opt/${SERVICE_NAME}/${SERVICE_NAME}.jar",
-
-            "# --- systemd unit 작성/갱신 ---",
-            "sudo bash -lc '\''cat > /etc/systemd/system/'\''${SERVICE_NAME}'\''.service <<UNIT
+      # 1) 원격에서 실행할 스크립트를 로컬로 생성
+      - |
+        cat > remote.sh <<'SH'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        : "${SERVICE_NAME:?SERVICE_NAME required}"
+        : "${PORT:?PORT required}"
+        : "${BUCKET:?BUCKET required}"
+        : "${KEY_CUR:?KEY_CUR required}"
+        
+        APP_DIR="/opt/${SERVICE_NAME}"
+        sudo mkdir -p "${APP_DIR}"
+        sudo chown -R ec2-user:ec2-user "${APP_DIR}"
+        
+        # --- Parameter Store -> env values ---
+        getp(){ aws ssm get-parameter --with-decryption --name "$1" --query 'Parameter.Value' --output text; }
+        DB_URL="$(getp /nextshop/user/db/url)"
+        DB_USER="$(getp /nextshop/user/db/username)"
+        DB_PASS="$(getp /nextshop/user/db/password)"
+        JWT_SECRET="$(getp /nextshop/user/jwt_secret || echo)"
+        
+        # --- .env (runtime values) ---
+        cat > "${APP_DIR}/.env" <<EOF
+        SPRING_PROFILES_ACTIVE=prod
+        SERVER_PORT=${PORT}
+        SPRING_DATASOURCE_URL=${DB_URL}
+        SPRING_DATASOURCE_USERNAME=${DB_USER}
+        SPRING_DATASOURCE_PASSWORD=${DB_PASS}
+        JWT_SECRET=${JWT_SECRET}
+        EOF
+        sudo chown ec2-user:ec2-user "${APP_DIR}/.env"
+        
+        # --- 최신 JAR 가져오기 ---
+        aws s3 cp "s3://${BUCKET}/${KEY_CUR}" "${APP_DIR}/${SERVICE_NAME}.jar"
+        
+        # --- systemd 유닛 ---
+        sudo tee "/etc/systemd/system/${SERVICE_NAME}.service" >/dev/null <<EOF
         [Unit]
-        Description='\''${SERVICE_NAME}'\''
+        Description=${SERVICE_NAME}
         After=network.target
-
+        
         [Service]
         User=ec2-user
-        WorkingDirectory=/opt/'\''${SERVICE_NAME}'\''
-        EnvironmentFile=/opt/'\''${SERVICE_NAME}'\''/.env
-        ExecStart=/usr/bin/java -jar /opt/'\''${SERVICE_NAME}'\''/'\''${SERVICE_NAME}'\''.jar --server.port=${PORT}
+        WorkingDirectory=/opt/${SERVICE_NAME}
+        EnvironmentFile=/opt/${SERVICE_NAME}/.env
+        ExecStart=/usr/bin/java -Xms256m -Xmx512m -jar /opt/${SERVICE_NAME}/${SERVICE_NAME}.jar --server.port=${PORT}
         Restart=always
-
+        RestartSec=5
+        LimitNOFILE=65535
+        
         [Install]
         WantedBy=multi-user.target
-        UNIT'",
+        EOF
+        
+        sudo systemctl daemon-reload
+        sudo systemctl enable "${SERVICE_NAME}.service" || true
+        sudo systemctl restart "${SERVICE_NAME}.service"
+        
+        # --- health check ---
+        for i in {1..30}; do
+          curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null && exit 0
+          sleep 2
+        done
+        
+        journalctl -u "${SERVICE_NAME}.service" -n 200 --no-pager || true
+        exit 1
+        SH
+      - chmod +x remote.sh
 
-            "# --- 데몬리로드/재시작 ---",
-            "sudo systemctl daemon-reload",
-            "sudo systemctl enable ${SERVICE_NAME} || true",
-            "sudo systemctl restart ${SERVICE_NAME}",
+      # 2) 스크립트를 base64로 인코딩 (GNU base64 없으면 tr로 줄바꿈 제거)
+      - B64=$(base64 -w0 remote.sh 2>/dev/null || base64 remote.sh | tr -d '\n')
 
-            "# --- health check ---",
-            "for i in {1..30}; do curl -fsS http://127.0.0.1:${PORT}/health >/dev/null && exit 0; sleep 2; done",
-            "journalctl -u ${SERVICE_NAME}.service -n 200 --no-pager || true",
-            "exit 1"
-          ]
-        }
-        JSON'
-
-      # 2) SSM 실행 (파라미터는 파일로 전달)
-      - >-
-        aws ssm send-command
-        --document-name "AWS-RunShellScript"
-        --comment "deploy ${SERVICE_NAME}"
-        --targets "Key=tag:${TARGET_TAG_KEY},Values=${TARGET_TAG_VAL}"
-        --parameters file://params.json
-        --timeout-seconds 600
-        --max-concurrency "50%"
-        --max-errors "0%"
-        --region "${AWS_REGION}"
-        > ssm-result.json
+      # 3) SSM에 "베이스64 스크립트" 전달 → 인스턴스에서 디코드/실행
+      - echo "== SSM send-command (base64 script) =="
+      - |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --comment "deploy ${SERVICE_NAME}" \
+          --targets "Key=tag:${TARGET_TAG_KEY},Values=${TARGET_TAG_VAL}" \
+          --parameters "commands=[
+            \"echo ${B64} | base64 -d > /tmp/remote.sh\",
+            \"chmod +x /tmp/remote.sh\",
+            \"SERVICE_NAME=${SERVICE_NAME} PORT=${PORT} BUCKET=${BUCKET} KEY_CUR=${KEY_CUR} /tmp/remote.sh\"
+          ]" \
+          --timeout-seconds 600 \
+          --max-concurrency "50%" \
+          --max-errors "0%" \
+          --region ${AWS_REGION} > ssm-result.json
 
 artifacts:
   files:
