@@ -18,97 +18,54 @@ phases:
 
   build:
     commands:
-      - echo "== write remote script locally =="
-
-      # 1) 원격에서 실행할 스크립트를 로컬로 생성
       - |
-        cat > remote.sh <<'SH'
-        #!/usr/bin/env bash
-        set -euo pipefail
+        TARGETS=$(aws ec2 describe-instances \
+          --region "$AWS_REGION" \
+          --filters "Name=tag:${TARGET_TAG_KEY},Values=${TARGET_TAG_VAL}" "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[].InstanceId" --output text)
         
-        : "${SERVICE_NAME:?SERVICE_NAME required}"
-        : "${PORT:?PORT required}"
-        : "${BUCKET:?BUCKET required}"
-        : "${KEY_CUR:?KEY_CUR required}"
+        [ -z "$TARGETS" ] && echo "no targets" && exit 1
         
-        APP_DIR="/opt/${SERVICE_NAME}"
-        sudo mkdir -p "${APP_DIR}"
-        sudo chown -R ec2-user:ec2-user "${APP_DIR}"
+        COMMAND_ID=$(aws ssm send-command \
+          --region "$AWS_REGION" \
+          --instance-ids $TARGETS \
+          --document-name "AWS-RunShellScript" \
+          --comment "Deploy ${SERVICE_NAME}" \
+          --parameters commands="[
+            \"set -eux\",
+            \"source /etc/os-release || true\",
+            \"if [ \\\"${ID:-}\\\" = amzn ] && [ \\\"${VERSION_ID:-}\\\" = 2 ]; then sudo yum install -y java-17-amazon-corretto-headless; fi\",
+            \"if [ \\\"${ID:-}\\\" = amzn ] && [ \\\"${VERSION_ID:-}\\\" = 2023 ]; then sudo dnf install -y java-17-amazon-corretto-headless; fi\",
+            \"if [ \\\"${ID:-}\\\" = ubuntu ] || [[ \\\"${ID_LIKE:-}\\\" = *debian* ]]; then sudo apt-get update -y && sudo apt-get install -y openjdk-17-jre-headless; fi\",
         
-        # --- Parameter Store -> env values ---
-        getp(){ aws ssm get-parameter --with-decryption --name "$1" --query 'Parameter.Value' --output text; }
-        DB_URL="$(getp /nextshop/user/db/url)"
-        DB_USER="$(getp /nextshop/user/db/username)"
-        DB_PASS="$(getp /nextshop/user/db/password)"
-        JWT_SECRET="$(getp /nextshop/user/jwt_secret || echo)"
+            \"sudo mkdir -p ${DEPLOY_DIR}\",
+            \"sudo aws s3 cp s3://${BUCKET}/${KEY_CUR} ${DEPLOY_DIR}/${SERVICE_NAME}.jar --region ${AWS_REGION}\",
+            \"sudo bash -lc 'systemctl stop ${SERVICE_NAME} || true'\",
         
-        # --- .env (runtime values) ---
-        cat > "${APP_DIR}/.env" <<EOF
-        SPRING_PROFILES_ACTIVE=prod
-        SERVER_PORT=${PORT}
-        SPRING_DATASOURCE_URL=${DB_URL}
-        SPRING_DATASOURCE_USERNAME=${DB_USER}
-        SPRING_DATASOURCE_PASSWORD=${DB_PASS}
-        JWT_SECRET=${JWT_SECRET}
-        EOF
-        sudo chown ec2-user:ec2-user "${APP_DIR}/.env"
-        
-        # --- 최신 JAR 가져오기 ---
-        aws s3 cp "s3://${BUCKET}/${KEY_CUR}" "${APP_DIR}/${SERVICE_NAME}.jar"
-        
-        # --- systemd 유닛 ---
-        sudo tee "/etc/systemd/system/${SERVICE_NAME}.service" >/dev/null <<EOF
-        [Unit]
+            \"sudo bash -lc 'cat >/etc/systemd/system/${SERVICE_NAME}.service <<EOF
+        [ Unit ]
         Description=${SERVICE_NAME}
         After=network.target
-        
         [Service]
         User=ec2-user
-        WorkingDirectory=/opt/${SERVICE_NAME}
-        EnvironmentFile=/opt/${SERVICE_NAME}/.env
-        ExecStart=/usr/bin/java -Xms256m -Xmx512m -jar /opt/${SERVICE_NAME}/${SERVICE_NAME}.jar --server.port=${PORT}
+        WorkingDirectory=${DEPLOY_DIR}
+        ExecStart=/usr/bin/java -Xms256m -Xmx512m -jar ${DEPLOY_DIR}/${SERVICE_NAME}.jar --server.port=${PORT}
         Restart=always
         RestartSec=5
-        LimitNOFILE=65535
-        
+        SuccessExitStatus=143
         [Install]
         WantedBy=multi-user.target
-        EOF
+        EOF'\",
         
-        sudo systemctl daemon-reload
-        sudo systemctl enable "${SERVICE_NAME}.service" || true
-        sudo systemctl restart "${SERVICE_NAME}.service"
+        \"sudo systemctl daemon-reload\",
+        \"sudo systemctl enable ${SERVICE_NAME}\",
+        \"sudo systemctl restart ${SERVICE_NAME}\",
+        \"sleep 2\",
+        \"curl -sf http://localhost:${PORT}/actuator/health || exit 2\"
+        ]" \
+        --query "Command.CommandId" --output text)
         
-        # --- health check ---
-        for i in {1..30}; do
-          curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null && exit 0
-          sleep 2
-        done
-        
-        journalctl -u "${SERVICE_NAME}.service" -n 200 --no-pager || true
-        exit 1
-        SH
-      - chmod +x remote.sh
-
-      # 2) 스크립트를 base64로 인코딩 (GNU base64 없으면 tr로 줄바꿈 제거)
-      - B64=$(base64 -w0 remote.sh 2>/dev/null || base64 remote.sh | tr -d '\n')
-
-      # 3) SSM에 "베이스64 스크립트" 전달 → 인스턴스에서 디코드/실행
-      - echo "== SSM send-command (base64 script) =="
-      - |
-        aws ssm send-command \
-          --document-name "AWS-RunShellScript" \
-          --comment "deploy ${SERVICE_NAME}" \
-          --targets "Key=tag:${TARGET_TAG_KEY},Values=${TARGET_TAG_VAL}" \
-          --parameters "commands=[
-            \"echo ${B64} | base64 -d > /tmp/remote.sh\",
-            \"chmod +x /tmp/remote.sh\",
-            \"SERVICE_NAME=${SERVICE_NAME} PORT=${PORT} BUCKET=${BUCKET} KEY_CUR=${KEY_CUR} /tmp/remote.sh\"
-          ]" \
-          --timeout-seconds 600 \
-          --max-concurrency "50%" \
-          --max-errors "0%" \
-          --region ${AWS_REGION} > ssm-result.json
+        echo "{\"command_id\":\"$COMMAND_ID\"}" > ssm-result.json
 
 artifacts:
   files:
