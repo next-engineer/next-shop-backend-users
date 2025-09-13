@@ -55,6 +55,8 @@ done
 # 실행권한 보장
 chmod 755 "$JAR" || true
 
+cd "$APP_DIR"
+
 # 백그라운드 실행
 echo "[START] nohup java -jar ..."
 nohup /usr/bin/java \
