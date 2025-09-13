@@ -6,6 +6,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.time.Duration;
 import java.util.List;
 
 @Configuration
@@ -14,20 +15,16 @@ public class CorsConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration cfg = new CorsConfiguration();
-        cfg.setAllowedOrigins(List.of(
-                "http://localhost:3000",
-                "http://localhost:5173",
-                //alb DNS 주소
-                "shop-user-api-1314323053.ap-northeast-2.elb.amazonaws.com",
-                "https://shop.nextcloudlab.com/",
-                "https://d9gv73ip2rojg.cloudfront.net"
-                //프론트엔드 도매인 생성 시 사용.
-//                "http://shop.nextcloudlab.com"
-        ));
+
+        // 개발/테스트: 모든 오리진 허용 (운영 시엔 특정 도메인으로 제한)
+        cfg.setAllowedOriginPatterns(List.of("*"));
         cfg.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
         cfg.setAllowedHeaders(List.of("Authorization","Content-Type","X-Requested-With"));
-        cfg.setExposedHeaders(List.of("Authorization"));
-        cfg.setAllowCredentials(true);
+        cfg.setExposedHeaders(List.of("Authorization","Location"));
+        // JWT 헤더 인증이면 false 권장(쿠키 기반이면 true + 정확한 오리진 나열)
+        cfg.setAllowCredentials(false);
+        cfg.setMaxAge(Duration.ofHours(1)); // 프리플라이트 캐시
+
         UrlBasedCorsConfigurationSource src = new UrlBasedCorsConfigurationSource();
         src.registerCorsConfiguration("/**", cfg);
         return src;
